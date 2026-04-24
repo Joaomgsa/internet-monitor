@@ -1,0 +1,66 @@
+# Speedtest Tracker + Prometheus + Grafana
+# Portas escolhidas fora da faixa de dev web (3000-8999)
+
+services:
+
+  # ─── Speedtest Tracker ─────────────────────────────
+  speedtest-tracker:
+    image: lscr.io/linuxserver/speedtest-tracker:latest
+    container_name: speedtest-tracker
+    restart: unless-stopped
+    ports:
+      - "9100:80"     # HTTP  → http://localhost:9100
+      - "9143:443"    # HTTPS → https://localhost:9143
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Sao_Paulo
+      - APP_KEY=${APP_KEY}
+      - APP_URL=http://localhost:9100
+      - DB_CONNECTION=sqlite
+      - SPEEDTEST_SCHEDULE=0 * * * *     # a cada hora
+      - PRUNE_RESULTS_OLDER_THAN=30      # retém 30 dias
+    volumes:
+      - ./data/speedtest:/config
+    networks:
+      - monitor-net
+
+  # ─── Prometheus ────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"   # → http://localhost:9090
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=90d'
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./data/prometheus:/prometheus
+    networks:
+      - monitor-net
+
+  # ─── Grafana ───────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "9200:3000"   # → http://localhost:9200
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_SERVER_HTTP_PORT=3000
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./data/grafana:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    networks:
+      - monitor-net
+
+networks:
+  monitor-net:
+    driver: bridge

@@ -1,0 +1,191 @@
+# nginx.conf.example
+# Configuração segura de nginx como proxy reverso com HTTPS e autenticação
+# Copie para nginx.conf e configure com seus certificados
+
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+    use epoll;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] \"$request\" '
+                    '$status $body_bytes_sent \"$http_referer\" '
+                    '\"$http_user_agent\" \"$http_x_forwarded_for\"';
+
+    access_log /var/log/nginx/access.log main;
+
+    # ═══════════════════════════════════════════════════════════
+    # CONFIGURAÇÕES DE SEGURANÇA
+    # ═══════════════════════════════════════════════════════════
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    client_max_body_size 20M;
+
+    # Headers de Segurança
+    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;
+    add_header X-Frame-Options \"SAMEORIGIN\" always;
+    add_header X-Content-Type-Options \"nosniff\" always;
+    add_header X-XSS-Protection \"1; mode=block\" always;
+    add_header Referrer-Policy \"strict-origin-when-cross-origin\" always;
+    add_header Permissions-Policy \"geolocation=(), microphone=(), camera=()\" always;
+
+    # SSL/TLS
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    # ═══════════════════════════════════════════════════════════
+    # REDIRECTS HTTP → HTTPS
+    # ═══════════════════════════════════════════════════════════
+
+    server {
+        listen 80;
+        listen [::]:80;
+        server_name _;
+
+        location / {
+            return 301 https://$host$request_uri;
+        }
+
+        # ACME challenge (Let's Encrypt)
+        location /.well-known/acme-challenge/ {
+            root /var/www/certbot;
+        }
+    }
+
+    # ═══════════════════════════════════════════════════════════
+    # GRAFANA - COM HTTPS E AUTENTICAÇÃO
+    # ═══════════════════════════════════════════════════════════
+
+    server {
+        listen 443 ssl http2;
+        listen [::]:443 ssl http2;
+        server_name monitor.seu-dominio.com;
+
+        # Certificados SSL (Let's Encrypt)
+        ssl_certificate /etc/letsencrypt/live/monitor.seu-dominio.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/monitor.seu-dominio.com/privkey.pem;
+
+        # Autenticação básica (básico, considere OAuth2 para produção)
+        # Gerar com: htpasswd -c .htpasswd username
+        auth_basic \"Área Restrita\";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
+        location / {
+            proxy_pass http://grafana:3000;
+
+            # Headers de proxy
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Port $server_port;
+
+            # WebSocket
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection \"upgrade\";
+
+            # Timeout
+            proxy_connect_timeout 600s;
+            proxy_send_timeout 600s;
+            proxy_read_timeout 600s;
+        }
+    }
+
+    # ═══════════════════════════════════════════════════════════
+    # PROMETHEUS - APENAS ACESSO INTERNO
+    # ═══════════════════════════════════════════════════════════
+
+    server {
+        listen 443 ssl http2;
+        listen [::]:443 ssl http2;
+        server_name prometheus.seu-dominio.com;
+
+        ssl_certificate /etc/letsencrypt/live/seu-dominio.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/seu-dominio.com/privkey.pem;
+
+        # ACESSO APENAS DE IPs PERMITIDAS
+        allow 172.25.0.0/16;  # Rede docker interna
+        allow 192.168.0.0/16; # Sua rede interna (ajuste conforme necessário)
+        deny all;
+
+        # Autenticação token (mais segura)
+        auth_request /verify-token;
+
+        location / {
+            proxy_pass http://prometheus:9090;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            proxy_connect_timeout 600s;
+            proxy_send_timeout 600s;
+            proxy_read_timeout 600s;
+        }
+    }
+
+    # ═══════════════════════════════════════════════════════════
+    # SPEEDTEST TRACKER - COM HTTPS
+    # ═══════════════════════════════════════════════════════════
+
+    server {
+        listen 443 ssl http2;
+        listen [::]:443 ssl http2;
+        server_name speedtest.seu-dominio.com;
+
+        ssl_certificate /etc/letsencrypt/live/seu-dominio.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/seu-dominio.com/privkey.pem;
+
+        # Autenticação básica
+        auth_basic \"Speedtest Tracker\";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
+        location / {
+            proxy_pass http://speedtest-tracker:80;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# INSTRUÇÕES:
+#
+# 1. Instalar certbot e obter certificados:
+#    sudo apt-get install certbot python3-certbot-nginx
+#    sudo certbot certonly --standalone -d monitor.seu-dominio.com -d prometheus.seu-dominio.com -d speedtest.seu-dominio.com
+#
+# 2. Gerar arquivo de autenticação:
+#    docker exec nginx-monitor htpasswd -c /etc/nginx/.htpasswd usuario
+#
+# 3. Atualizar server_name com seu domínio
+#
+# 4. Copiar para container:
+#    docker cp nginx.conf nginx-monitor:/etc/nginx/nginx.conf
+#    docker exec nginx-monitor nginx -s reload
+#
+# 5. Testar segurança SSL:
+#    https://www.ssllabs.com/ssltest/
+#
+# ═══════════════════════════════════════════════════════════════════════════
