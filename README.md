@@ -27,7 +27,7 @@ Três serviços rodam juntos via Docker:
 **1. Clone o repositório**
 
 ```bash
-git clone <url-do-repositorio>
+git clone [<url-do-repositorio>](https://github.com/Joaomgsa/internet-monitor/)>]
 cd internet-monitor
 ```
 
